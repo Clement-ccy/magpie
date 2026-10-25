@@ -3,6 +3,7 @@ package gui
 import (
 	"cmp"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"slices"
 	"strings"
@@ -59,6 +60,14 @@ type agentModelJSON struct {
 	// Own: one of Codex's own, a ChatGPT account's, which Codex lists
 	// ahead of magpie's until the user puts them in an order (#855)
 	Own bool `json:"own,omitempty"`
+	// API is the API the agent asks this one on, where it can say it model
+	// by model and the user chose one (settings.AgentAPIs); "" asks it as
+	// its provider says
+	API string `json:"api,omitempty"`
+	// Auto is the API it is asked on now, as its files have it, while the
+	// user left it on Auto (agent.AskedOn): the one its provider, or the
+	// routing group, says
+	Auto string `json:"auto,omitempty"`
 }
 
 // takesCatalog reports whether an agent picks among magpie's catalog: some
@@ -157,12 +166,21 @@ func agentModelList(a *agent.Agent) []agentModelJSON {
 	listed, _ := provider.ListedFor(id)
 	off := provider.ModelOff(id)
 	vals := a.Values()
+	// what Auto asks each of them on, where the agent can choose: the same
+	// resolution its files are written with (agent.AskedOn)
+	var asked map[string]string
+	if a.PicksAPI {
+		asked = agent.AskedOn(id)
+	}
 	out := []agentModelJSON{}
 	for _, e := range listed {
 		m := agentModelJSON{ID: e.ID, Name: e.Name, Group: e.Provider.Name, Icon: e.Provider.Icon, Context: e.Context,
 			Hidden: off(e.ID), InUse: usedBy(a, vals, e), Own: id == "codex" && provider.CodexOwn(e)}
 		if m.Name == "" {
 			m.Name = e.Model
+		}
+		if a.PicksAPI {
+			m.API, m.Auto = string(provider.AgentAPI(id, e.ID)), asked[e.ID]
 		}
 		m.Logo = agent.ModelIcon(e.Model)
 		if e.Group != "" {
@@ -204,6 +222,37 @@ func agentModelsAPI(mux *http.ServeMux) {
 		}
 		writeJSON(rw, map[string]any{"fast": provider.IsFastPick(in.For, in.Ref), "ultra": provider.IsUltraPick(in.For, in.Ref)})
 	})
+	// the API an agent asks a model on, one agent and one model at a time:
+	// for is the agent's id, ref the entry's, api chat, responses or
+	// anthropic, "" for Auto — the API its provider says it answers best
+	// (provider.AgentAPI). Only an agent whose files say it model by model
+	// is offered it (agent.PicksAPI)
+	mux.HandleFunc("POST /api/agent-api", func(rw http.ResponseWriter, r *http.Request) {
+		var in struct {
+			For, Ref, API string
+		}
+		if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+			fail(rw, err)
+			return
+		}
+		a, err := agent.Find(in.For)
+		if err != nil {
+			fail(rw, err)
+			return
+		}
+		if !a.PicksAPI {
+			fail(rw, fmt.Errorf("%s can't say which API a model is asked on", a.Name))
+			return
+		}
+		if err := provider.SetAgentAPI(a.ListsFor(), in.Ref, in.API); err != nil {
+			fail(rw, err)
+			return
+		}
+		// its files follow in a moment, as after a save: Hermes's provider
+		// entries, DeepSeek Harness's routes, Pi's models (agent.SyncCatalogSoon)
+		agent.SyncCatalogSoon()
+		writeJSON(rw, map[string]any{"api": string(provider.AgentAPI(a.ListsFor(), in.Ref))})
+	})
 	mux.HandleFunc("GET /api/agent-models/{id}", func(rw http.ResponseWriter, r *http.Request) {
 		a, err := agent.Find(r.PathValue("id"))
 		if err != nil {
@@ -214,7 +263,7 @@ func agentModelsAPI(mux *http.ServeMux) {
 		// own: its pickers offer models of the agent's own beside
 		// magpie's, which ownHidden leaves out (#1642)
 		writeJSON(rw, map[string]any{"models": agentModelList(a), "ordered": len(provider.ModelOrder(a.ListsFor())) > 0, "only": only,
-			"own": a.OwnModels(a.Values()), "ownHidden": provider.OwnModelsHidden(a.ListsFor())})
+			"own": a.OwnModels(a.Values()), "ownHidden": provider.OwnModelsHidden(a.ListsFor()), "picksAPI": a.PicksAPI})
 	})
 	// hidden is every entry to take out of the agent's lists; the others
 	// are shown, and one the agent is set to is kept in whatever is asked

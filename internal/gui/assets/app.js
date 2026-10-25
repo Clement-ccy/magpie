@@ -3172,8 +3172,8 @@ async function openAgentModels(a, anchor, ev) {
   // until it is ticked (#1337), not every one not taken out
   // own: its pickers offer models the agent reaches on its own beside
   // magpie's (DeepSeek Harness's), which ownHidden leaves out (#1642)
-  let models, ordered = false, only = false, own = false, ownHidden = false;
-  try { ({ models, ordered, only = false, own = false, ownHidden = false } = await api("agent-models/" + encodeURIComponent(a.id))); }
+  let models, ordered = false, only = false, own = false, ownHidden = false, picksAPI = false;
+  try { ({ models, ordered, only = false, own = false, ownHidden = false, picksAPI = false } = await api("agent-models/" + encodeURIComponent(a.id))); }
   catch (e) {
     if (agentModelsLoading === loading) { loading.drop(); status(e.message, "err"); }
     return;
@@ -3420,6 +3420,34 @@ async function openAgentModels(a, anchor, ev) {
     list.scrollTop = top;
     unorder.disabled = !ordered;
   };
+  // the API one model is asked on, where the agent's files can say it model
+  // by model: the pill says which, Auto that magpie's own answer stands —
+  // the one its provider, or the routing group, says — and picking another
+  // asks it on that from now (settings.AgentAPIs)
+  const setAPI = (m, proto) => {
+    const was = m.api || "";
+    if (was === proto) return;
+    m.api = proto;
+    draw();
+    me.saving = me.saving.then(() => api("agent-api", { for: a.id, ref: m.id, api: proto })).catch((e) => {
+      m.api = was;
+      status(e.message, "err");
+      draw();
+    });
+  };
+  const pickAPI = (m, at) => {
+    const opts = [{ v: "", name: "Auto", note: m.auto ? t("As its provider or group says: {api}", { api: apiLabel(m.auto) }) : t("As its provider or group says") },
+      ...PROTOS.filter(([k]) => AGENT_APIS.includes(k)).map(([k, l, hint]) => ({ v: k, name: l, note: hint }))];
+    openProtoMenu(at, opts, m.api || "", (v) => setAPI(m, v), "API this model is asked on", "model-api-menu");
+  };
+  const apiPill = (m) => {
+    const b = el("span", "am-api" + (m.api ? " on" : ""), m.api ? apiLabel(m.api) : t("Auto"));
+    b.title = m.api
+      ? t("Asked on {api} for {agent}; click to change", { api: apiLabel(m.api), agent: a.name })
+      : t("Asked as {agent}'s provider or group says; click to change", { agent: a.name });
+    b.onclick = (ev) => { ev.preventDefault(); ev.stopPropagation(); pickAPI(m, b); };
+    return b;
+  };
   const draw = () => {
     if (ordering) return drawOrder();
     const top = list.scrollTop;
@@ -3481,7 +3509,8 @@ async function openAgentModels(a, anchor, ev) {
           } else lg = m.logo && !route ? icon(m.logo) : el("span", "ic");
           if (route && !m.icons?.length) lg.append(svg(FAN, 14, 1.5));
           lg.classList.add("lg");
-          r.append(lg, n, el("span", "x", ctxShort(m.context)), ck);
+          if (picksAPI) r.append(lg, n, apiPill(m), el("span", "x", ctxShort(m.context)), ck);
+          else r.append(lg, n, el("span", "x", ctxShort(m.context)), ck);
           if (m.inUse) r.setAttribute("aria-disabled", "true");
           else r.onclick = () => {
             m.hidden = !m.hidden;
@@ -9034,6 +9063,10 @@ const PROTOS = [["chat", "OpenAI", "Chat Completions — most agents"], ["respon
 // Gemini generateContent at a Vertex AI provider's project, as its
 // endpoint is shown and tested
 const VERTEX_EP_HINT = "Gemini generateContent — what Vertex AI serves at your Google Cloud project";
+// AGENT_APIS: the APIs an agent whose files say one per model can ask it on
+// (Hermes's provider entries, DeepSeek Harness's routes, Pi's models). Gemini
+// is not among them: a group's Gemini is relayed, not asked as Gemini
+const AGENT_APIS = ["chat", "responses", "anthropic"];
 // apiLabel: the name an API (a protocol) goes by in the editor
 const apiLabel = (proto) => (PROTOS.find(([k]) => k === proto) || [])[1] || proto;
 // vertexBase is where a Vertex AI provider's requests go, the address its
