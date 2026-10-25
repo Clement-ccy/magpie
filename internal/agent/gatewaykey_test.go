@@ -36,7 +36,7 @@ func TestGatewayKeyBeyondLoopback(t *testing.T) {
 			"opencode": oc["apiKey"].(string),
 			"crush":    cr["api_key"].(string),
 			"pi":       pi["apiKey"].(string),
-			"hermes":   hermesProviderAt(gw).APIKey,
+			"hermes":   hermesEntries(gw)[0].APIKey,
 		}
 		for _, e := range droidEntriesAt(gw) {
 			out["droid"] = e.APIKey

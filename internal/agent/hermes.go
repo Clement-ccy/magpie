@@ -2,18 +2,23 @@ package agent
 
 // Hermes Agent (Nous Research) keeps its settings in $HERMES_HOME/config.yaml,
 // by default %LOCALAPPDATA%\hermes\config.yaml on Windows and
-// ~/.hermes/config.yaml elsewhere (place.hermesHome): the model under model.default, served by
-// model.provider, which may name an entry of providers. magpie adds itself
-// there as the provider "magpie" (the gateway, spoken to as chat completions,
-// with the catalog as its models) and points model.provider at it; a model
-// through magpie is "magpie/<provider>/<model>" here and model.default holds
-// "<provider>/<model>". The provider and model the user had are stashed and
-// put back when magpie steps out. A model of the user's own picked after
-// that, in Hermes or on the Agents page, leaves magpie's provider in
-// providers: Hermes stays connected, its session model picker still offers
-// magpie's models beside its own (lijiho96940561 on X: Hermes went to Not
-// connected and magpie's models left its picker), and only Disconnect
-// takes the provider out.
+// ~/.hermes/config.yaml elsewhere (place.hermesHome): the model under
+// model.default, served by model.provider, which may name an entry of
+// providers. magpie adds itself there as the provider "magpie" (the gateway,
+// spoken to as chat completions, with the catalog as its models) and points
+// model.provider at it; a model through magpie is
+// "magpie/<provider>/<model>" here and model.default holds
+// "<provider>/<model>". A model the user asks on another API than chat
+// completions (settings.AgentAPIs, the picker on the Agents page) goes into
+// an entry of its own beside it — "magpie-responses", "magpie-anthropic" —
+// as Hermes takes a provider entry's api_mode for every model it serves, and
+// model.provider names the entry the model is on. The provider and model the
+// user had are stashed and put back when magpie steps out. A model of the
+// user's own picked after that, in Hermes or on the Agents page, leaves
+// magpie's provider in providers: Hermes stays connected, its session model
+// picker still offers magpie's models beside its own (lijiho96940561 on X:
+// Hermes went to Not connected and magpie's models left its picker), and
+// only Disconnect takes the provider out.
 //
 // Each of Hermes's bots is a profile with its own config.yaml (see
 // hermesProfiles), which doesn't read the main one's: magpie's provider goes
@@ -32,6 +37,7 @@ import (
 	"github.com/yetone/magpie/internal/appdir"
 	"github.com/yetone/magpie/internal/dirent"
 	"github.com/yetone/magpie/internal/edit"
+	"github.com/yetone/magpie/internal/provider"
 )
 
 func hermes(home string) *Agent { return hermesIn(here(home)) }
@@ -42,23 +48,50 @@ func hermes(home string) *Agent { return hermesIn(here(home)) }
 func hermesIn(at place) *Agent {
 	dir := at.hermesHome()
 	path := filepath.Join(dir, "config.yaml")
-	hermesProvider := func(p string) any { return hermesKept(at, p, hermesProviderAt(at.gw())) }
-	// spread puts magpie's provider, as it is now, into every other
-	// profile's config beside the one magpie connects
+	// writeEntries puts magpie's provider entries, as they are now, into the
+	// config at p: one per API a model is asked on, keeping what Hermes and
+	// the user put in each. create adds them to a config that has none (a
+	// profile's); the config magpie connects is written where magpie wired
+	// it, and nowhere else.
+	writeEntries := func(p string, create bool) error {
+		if edit.GetYAMLMap(p, "providers."+magpieID) == nil && !create {
+			return nil
+		}
+		var errs []error
+		live := make(map[string]bool, len(hermesEntryIDs))
+		for _, e := range hermesEntries(at.gw()) {
+			live[e.Name] = true
+			k := "providers." + e.Name
+			if edit.GetYAMLMap(p, k) != nil {
+				errs = append(errs, syncYAML(p, k, func() any { return hermesKept(at, p, e) }))
+			} else {
+				errs = append(errs, edit.SetYAML(p, edit.KV{Path: k, Value: hermesKept(at, p, e)}))
+			}
+		}
+		// an entry every model has moved off goes, or Hermes would offer it
+		// with nothing in it
+		for _, id := range hermesEntryIDs[1:] {
+			if !live[id] && edit.GetYAMLMap(p, "providers."+id) != nil {
+				errs = append(errs, edit.DelYAML(p, "providers."+id))
+			}
+		}
+		errs = append(errs, hermesRepoint(p))
+		return errors.Join(errs...)
+	}
+	// spread puts magpie's provider entries into every other profile's
+	// config beside the one magpie connects
 	spread := func() error {
 		var errs []error
 		for _, p := range hermesOthers(at, dir) {
-			if edit.GetYAMLMap(p, "providers."+magpieID) != nil {
-				errs = append(errs, syncYAML(p, "providers."+magpieID, func() any { return hermesProvider(p) }))
-			} else {
-				errs = append(errs, edit.SetYAML(p, edit.KV{Path: "providers." + magpieID, Value: hermesProvider(p)}))
-			}
+			errs = append(errs, writeEntries(p, true))
 		}
 		return errors.Join(errs...)
 	}
 	key := "hermes:" + path + ":"
 	getKey := func(k string) string { v, _ := edit.GetYAML(path, k); return v }
-	onMagpie := func() bool { return getKey("model.provider") == magpieID }
+	// onMagpie: the model is asked through one of magpie's entries, which
+	// one saying the API it is asked on
+	onMagpie := func() bool { return hermesAPIOf(getKey("model.provider")) != "" }
 	// joined: magpie's provider is in providers, though the model is one of
 	// Hermes's own
 	joined := func() bool { _, ok := edit.GetYAML(path, "providers."+magpieID+".base_url"); return ok }
@@ -88,8 +121,10 @@ func hermesIn(at place) *Agent {
 		ID: "hermes", Name: "Hermes Agent", Icon: "hermes", Aliases: []string{"hermes-agent"}, Spelled: prefixed, NoNames: true,
 		UA:  []string{"hermes-agent"},
 		Bin: "hermes", Dir: dir, Path: path,
+		// a model goes into the provider entry of the API it is asked on
+		PicksAPI: true,
 		Sync: func() error {
-			if err := syncYAML(path, "providers."+magpieID, func() any { return hermesProvider(path) }); err != nil || !joined() {
+			if err := writeEntries(path, false); err != nil || !joined() {
 				return err
 			}
 			return spread()
@@ -105,8 +140,8 @@ func hermesIn(at place) *Agent {
 		// magpie's, goes back by the field
 		Unwire: func() error {
 			var errs []error
-			if joined() {
-				errs = append(errs, edit.DelYAML(path, "providers."+magpieID))
+			if del := hermesEntryDels(path); len(del) > 0 {
+				errs = append(errs, edit.DelYAML(path, del...))
 			}
 			for _, p := range hermesOthers(at, dir) {
 				errs = append(errs, hermesUnwireProfile(p))
@@ -162,10 +197,12 @@ func hermesIn(at place) *Agent {
 						})
 					}
 					if err := edit.SetYAML(path,
-						edit.KV{Path: "providers." + magpieID, Value: hermesProvider(path)},
-						edit.KV{Path: "model.provider", Value: magpieID},
+						edit.KV{Path: "model.provider", Value: hermesEntryID(provider.AgentAPI("hermes", ref))},
 						edit.KV{Path: "model.default", Value: ref},
 					); err != nil {
+						return err
+					}
+					if err := writeEntries(path, true); err != nil {
 						return err
 					}
 					return spread()
@@ -255,20 +292,32 @@ func hermesOthers(at place, dir string) []string {
 	return out
 }
 
-// hermesUnwireProfile takes magpie's provider out of a profile's config. A
-// profile whose model is on magpie (one cloned from a connected main
-// config, or picked in that bot) would be left naming a provider that is
-// gone, so its provider and model go too, and Hermes takes its own
+// hermesUnwireProfile takes magpie's provider entries out of a profile's
+// config. A profile whose model is on magpie (one cloned from a connected
+// main config, or picked in that bot) would be left naming a provider that
+// is gone, so its provider and model go too, and Hermes takes its own
 // defaults, as the main config does with nothing stashed.
 func hermesUnwireProfile(p string) error {
-	if edit.GetYAMLMap(p, "providers."+magpieID) == nil {
+	del := hermesEntryDels(p)
+	if len(del) == 0 {
 		return nil
 	}
-	del := []string{"providers." + magpieID}
-	if v, _ := edit.GetYAML(p, "model.provider"); v == magpieID {
+	if v, _ := edit.GetYAML(p, "model.provider"); hermesAPIOf(v) != "" {
 		del = append(del, "model.provider", "model.default")
 	}
 	return edit.DelYAML(p, del...)
+}
+
+// hermesEntryDels is the keys magpie's provider entries live at in the
+// config at path, as many as are there
+func hermesEntryDels(path string) []string {
+	var del []string
+	for _, id := range hermesEntryIDs {
+		if edit.GetYAMLMap(path, "providers."+id) != nil {
+			del = append(del, "providers."+id)
+		}
+	}
+	return del
 }
 
 type hermesProviderEntry struct {
@@ -280,18 +329,101 @@ type hermesProviderEntry struct {
 	Models  []string          `yaml:"models"`
 }
 
-// hermesProviderAt is magpie's entry under providers, for a Hermes reaching
-// the gateway at gw. Hermes sends its own User-Agent only from a recent
-// release on, so the header names it for the gateway's usage view.
-func hermesProviderAt(gw string) hermesProviderEntry {
-	ms := []string{}
+// hermesEntryIDs are the ids magpie's provider entries may have. Hermes
+// takes a provider entry's api_mode for every model it serves, so a model
+// asked on anything but chat completions needs an entry of its own; one the
+// user left on Auto is on magpie's.
+var hermesEntryIDs = []string{magpieID, magpieID + "-responses", magpieID + "-anthropic"}
+
+// hermesAPIModes is what each entry asks the gateway on: Hermes's own names
+// for them (agent/agent_init.py _EXPLICIT_API_MODES), which take its
+// requests to /v1/chat/completions, /v1/responses and /v1/messages — all
+// paths the gateway serves at the one address.
+var hermesAPIModes = map[string]string{
+	magpieID:                "chat_completions",
+	magpieID + "-responses": "codex_responses",
+	magpieID + "-anthropic": "anthropic_messages",
+}
+
+// hermesEntryID is the entry a model asked on api goes in
+func hermesEntryID(api provider.Protocol) string {
+	switch api {
+	case provider.Responses:
+		return magpieID + "-responses"
+	case provider.Anthropic:
+		return magpieID + "-anthropic"
+	}
+	return magpieID
+}
+
+// hermesAPIOf is the API an entry id is asked on, "" for an id that isn't
+// magpie's
+func hermesAPIOf(id string) provider.Protocol {
+	switch id {
+	case magpieID:
+		return provider.Chat
+	case magpieID + "-responses":
+		return provider.Responses
+	case magpieID + "-anthropic":
+		return provider.Anthropic
+	}
+	return ""
+}
+
+// hermesEntries is magpie's provider entries for a Hermes reaching the
+// gateway at gw: magpie's own always (Hermes is connected by it, and every
+// model the user left on Auto is asked on it), and one more for each other
+// API a model is set to on the Agents page (settings.AgentAPIs). They are in
+// hermesEntryIDs' order, chat completions first, as Hermes reads the first
+// entry of a shared address when it decides how to ask a model for its
+// context window (hermes_cli/config_providers.py get_custom_provider_api_mode).
+// Hermes sends its own User-Agent only from a recent release on, so the
+// header names it for the gateway's usage view.
+func hermesEntries(gw string) []hermesProviderEntry {
+	picked := map[provider.Protocol][]string{provider.Chat: {}}
 	for _, m := range magpieModels("hermes") {
-		ms = append(ms, m.ID)
+		api := provider.AgentAPI("hermes", m.ID)
+		if api != provider.Responses && api != provider.Anthropic {
+			api = provider.Chat
+		}
+		picked[api] = append(picked[api], m.ID)
 	}
-	return hermesProviderEntry{
-		Name: magpieID, BaseURL: gw + "/v1", APIKey: keyAt(gw), APIMode: "chat_completions",
-		Headers: map[string]string{"User-Agent": "hermes-agent"}, Models: ms,
+	out := make([]hermesProviderEntry, 0, len(hermesEntryIDs))
+	for _, id := range hermesEntryIDs {
+		api := hermesAPIOf(id)
+		ms, ok := picked[api]
+		if !ok && api != provider.Chat {
+			continue
+		}
+		out = append(out, hermesProviderEntry{
+			Name: id, BaseURL: gw + "/v1", APIKey: keyAt(gw), APIMode: hermesAPIModes[id],
+			Headers: map[string]string{"User-Agent": "hermes-agent"}, Models: ms,
+		})
 	}
+	return out
+}
+
+// hermesRepoint points the config at path at the entry the model it is on is
+// asked through, which changes when that model's API does: Hermes keeps the
+// model and the provider serving it apart, so a model moved to another entry
+// would still be asked through the one it was on.
+func hermesRepoint(path string) error {
+	now, _ := edit.GetYAML(path, "model.provider")
+	if hermesAPIOf(now) == "" {
+		return nil
+	}
+	ref, _ := edit.GetYAML(path, "model.default")
+	if ref == "" {
+		ref, _ = edit.GetYAML(path, "model.model")
+	}
+	if ref == "" {
+		return nil
+	}
+	want := hermesEntryID(provider.AgentAPI("hermes", ref))
+	if want == now {
+		return nil
+	}
+	return edit.SetYAML(path, edit.KV{Path: "model.provider", Value: want})
 }
 
 // hermesKept is magpie's entry e laid over the one in the config at path.
@@ -303,11 +435,12 @@ func hermesProviderAt(gw string) hermesProviderEntry {
 // address, key, API mode and model list are magpie's (#2030), but for a
 // key the user keeps as a reference to a variable (hermesKeptKey).
 func hermesKept(at place, path string, e hermesProviderEntry) any {
-	e.APIKey = hermesKeptKey(at, path, e.APIKey)
-	if name, ok := edit.GetYAML(path, "providers."+magpieID+".name"); ok && strings.TrimSpace(name) != "" {
+	key := "providers." + e.Name
+	e.APIKey = hermesKeptKey(at, path, e.Name, e.APIKey)
+	if name, ok := edit.GetYAML(path, key+".name"); ok && strings.TrimSpace(name) != "" {
 		e.Name = name
 	}
-	return yamlKept(path, "providers."+magpieID, e, "base_url", "api_key", "api_mode", "models")
+	return yamlKept(path, key, e, "base_url", "api_key", "api_mode", "models")
 }
 
 // hermesEnvRef is a reference in a value of Hermes's config.yaml, which
@@ -372,8 +505,8 @@ func hermesKey(at place, path, v string) (key string, known bool) {
 // beside the config under its variable, which Hermes reads over the
 // environment; a value with more than the one reference in it is magpie's
 // key again.
-func hermesKeptKey(at place, path, want string) string {
-	raw, _ := edit.GetYAML(path, "providers."+magpieID+".api_key")
+func hermesKeptKey(at place, path, id, want string) string {
+	raw, _ := edit.GetYAML(path, "providers."+id+".api_key")
 	if !hermesEnvRef.MatchString(raw) {
 		return want
 	}
