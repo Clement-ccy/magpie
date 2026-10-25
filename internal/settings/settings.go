@@ -648,6 +648,14 @@ type Settings struct {
 	// Ultrafast instead (#1954), by agent id: each is in FastPicks too. An
 	// account that doesn't offer Ultrafast on the model is sent priority.
 	UltraPicks map[string][]string `json:"ultraPicks,omitempty"`
+	// AgentAPIs are the APIs an agent asks magpie's models on, by "<agent
+	// id>/<entry id>" (a model's "<provider id>/<model id>", or a routing
+	// group's id): set on the Agents page for an agent whose own settings
+	// say it model by model, so magpie writes each model where the agent
+	// asks it on that API, and the gateway relays the request to the one
+	// its provider speaks. An entry not named is left to its provider
+	// (Provider.Native), as before.
+	AgentAPIs map[string]string `json:"agentAPIs,omitempty"`
 
 	// The three maps below, and every one added beside them, are the
 	// per-model ones: a field named Model* whose type is a map[string]X,

@@ -681,17 +681,30 @@ func renameModelPrefs(s *settings.Settings, from, to string) bool {
 	// which models are shown, not what a model is called or costs
 	// (and so is the order they are listed in, the ones picked for an agent
 	// shown only its picks, and the ones sent fast or Ultrafast)
-	hidden := false
+	keyed := false
 	for _, m := range []map[string][]string{s.HiddenModels, s.PickedModels, s.OrderedModels, s.FastPicks, s.UltraPicks} {
 		for _, ids := range m {
 			for i, id := range ids {
 				if rest, ok := strings.CutPrefix(id, from+"/"); ok {
-					ids[i], hidden = to+"/"+rest, true
+					ids[i], keyed = to+"/"+rest, true
 				}
 			}
 		}
 	}
-	return moved || hidden
+	// and the API an agent asks a model on, whose key is the agent's and then
+	// the entry's, the entry's provider being in the middle of it
+	for k, api := range s.AgentAPIs {
+		agent, id, ok := strings.Cut(k, "/")
+		if !ok {
+			continue
+		}
+		if rest, ok := strings.CutPrefix(id, from+"/"); ok {
+			delete(s.AgentAPIs, k)
+			s.AgentAPIs[agent+"/"+to+"/"+rest] = api
+			keyed = true
+		}
+	}
+	return moved || keyed
 }
 
 // Label is how an agent's list names the entry: its name (the user's own,
