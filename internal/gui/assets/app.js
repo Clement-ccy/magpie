@@ -3623,15 +3623,28 @@ async function openAgentModels(a, anchor, ev) {
     box.style.maxHeight = Math.min(560, below) + "px";
   }
   anchor.classList.add("open");
-  me.outside = (e) => { if (!box.contains(e.target) && !me.anchor.contains(e.target)) closeAgentModels(); };
+  // A press in the API menu a pill opened is a press on this list's own
+  // pill, though the menu is in the body, outside box: it changes one model
+  // and leaves the list open for the next.
+  me.outside = (e) => {
+    if (box.contains(e.target) || me.anchor.contains(e.target) || protoMenu?.box.contains(e.target)) return;
+    closeAgentModels();
+  };
   me.keys = (e) => {
     if (e.key !== "Escape") return;
+    // the menu over the list takes Escape first: it closes itself, and the
+    // list stays open
+    if (protoMenu) return;
     e.preventDefault();
     e.stopPropagation();
     closeAgentModels();
     me.anchor.focus({ preventScroll: true });
   };
-  me.scrolled = (e) => { if (scrollCloses(box, e)) closeAgentModels(); };
+  me.scrolled = (e) => {
+    // the menu over the list scrolls itself, and stays with the list
+    if (protoMenu?.box.contains(e.target)) return;
+    if (scrollCloses(box, e)) closeAgentModels();
+  };
   document.addEventListener("mousedown", me.outside, true);
   document.addEventListener("keydown", me.keys, true);
   document.addEventListener("scroll", me.scrolled, true);

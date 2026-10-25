@@ -377,6 +377,16 @@ it and over no other icon (the browser's tooltip put Devin's name on ZCode's
 Z), moves at once to the next icon, and goes on a click, on leaving, and when
 Esc closes the picker; a rail icon focused from the keyboard is named too.
 
+`agent-api.test.cjs` picks the API a model is asked on from the Agents
+page: the pill beside a model's name reads "Auto" (自动) until one is picked,
+and opens on "API this model is asked on", naming what the provider or the
+routing group asks it on now. Picking Responses saves it for this agent's
+model alone (POST /api/agent-api) and leaves the list open, so the next model
+is one click away and both pills read their API; Esc over the open menu closes
+the menu and leaves the list, and the next Esc closes the list (it closed at
+the first pick, before the menu was counted as the list's own). Chromium and
+WebKit, English and Chinese, with the API faked.
+
 `agent-models-all-hidden.test.cjs` takes every model out of DeepSeek
 Harness's lists with "Hide all" (#356): the line under its name reads
 "Showing 0 / 3 models" (显示 0 / 3 个模型), stays once the list is closed and
