@@ -1131,7 +1131,9 @@ func piLikeKeyed(at place, id, name, dir string, key func() string) *Agent {
 	gone := at.key(id + ".scope.gone")
 	return &Agent{
 		ID: id, Name: name, Icon: id, Bin: id, Dir: dir, Path: path, Spelled: prefixed,
-		Restore: before.restore,
+		// one model at a time: a model's api in models.json
+		PicksAPI: true,
+		Restore:  before.restore,
 		Check: func() string {
 			if p, _ := get("defaultProvider"); p != magpieID {
 				return ""

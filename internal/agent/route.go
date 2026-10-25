@@ -231,12 +231,17 @@ func magpieModels(agent string) []catalog.Model {
 		// ObsidianArch02): Pi, omp, droid and dsh then ask it there, and a
 		// GPT group's tool-call arguments stream as the member sends them
 		// instead of being held for a Chat answer
-		if e.Group == "" {
-			if n := e.Provider.Native(e.Model); n != "" {
-				m.APIs = []string{string(n)}
-			}
-		} else if allResponses(members(e.ID)) {
-			m.APIs = []string{string(provider.Responses)}
+		//
+		// What the user set for this agent wins (settings.AgentAPIs): an
+		// agent whose own files can say it model by model asks the gateway
+		// on the API they picked, which relays it to the one the model's
+		// provider speaks
+		api := provider.AgentAPI(agent, e.ID)
+		if api == "" {
+			api = nativeAPI(e, members(e.ID))
+		}
+		if api != "" {
+			m.APIs = []string{string(api)}
 		}
 		// the service tiers Codex is offered on it, as the gateway's own
 		// lists offer them: Fast in the Codex CLI magpie writes
@@ -254,6 +259,36 @@ func magpieModels(agent string) []catalog.Model {
 		out = append(out, m)
 	}
 	return out
+}
+
+// AskedOn is the API each of an agent's models is asked on when the user sets
+// none, by entry id — what the Agents page's model list shows beside a model
+// left on Auto. It is not the one the user set: that one is the model's pick.
+func AskedOn(agent string) map[string]string {
+	defer provider.Hold()()
+	shown, _ := provider.CatalogFor(agent)
+	find := provider.GroupFinder()
+	out := make(map[string]string, len(shown))
+	for _, e := range shown {
+		_, ms, _ := find(e.ID)
+		if api := nativeAPI(e, ms); api != "" {
+			out[e.ID] = string(api)
+		}
+	}
+	return out
+}
+
+// nativeAPI is the API e is asked on with no pick of the user's: the one its
+// provider says, or Responses for a routing group every member of which is
+// served best there (see magpieModels).
+func nativeAPI(e provider.Entry, ms []provider.Member) provider.Protocol {
+	if e.Group != "" {
+		if allResponses(ms) {
+			return provider.Responses
+		}
+		return ""
+	}
+	return e.Provider.Native(e.Model)
 }
 
 // allResponses reports whether a group's members are all served best on

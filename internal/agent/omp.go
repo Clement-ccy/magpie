@@ -450,8 +450,10 @@ func ompAt(at place, dir string, entry func() ompProviderEntry) *Agent {
 	}
 	return &Agent{
 		ID: "omp", Name: "omp", Icon: "omp", Aliases: []string{"oh-my-pi"}, Spelled: prefixed,
-		UA:  []string{"oh-my-pi"},
-		Bin: "omp", Dir: dir, Path: path,
+		// one model at a time: a model's api in models.yml
+		PicksAPI: true,
+		UA:       []string{"oh-my-pi"},
+		Bin:      "omp", Dir: dir, Path: path,
 		// a role's thinking level is omp's, after whichever model it is on;
 		// a list of models is the user's own
 		SplitSuffix: ompSplit,

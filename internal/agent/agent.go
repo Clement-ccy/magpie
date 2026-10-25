@@ -143,6 +143,13 @@ type Agent struct {
 	// the name alone (Empryo, Cursor Private Inference). The setting says
 	// so for each one connected, rather than seeming to do nothing.
 	NoNames bool
+	// PicksAPI: the agent's own files say which API each of magpie's models
+	// is asked on, one model at a time, so the Agents page offers the
+	// choice for it and magpie writes each model under the API picked
+	// (settings.AgentAPIs): DeepSeek Harness's routes, Pi's and omp's
+	// models, Hermes's provider entries. An agent whose files can't say it
+	// isn't offered it.
+	PicksAPI bool
 	// Sync, for an agent that reads magpie's models from a file of its own
 	// rather than asking the gateway, rewrites that list as the catalog is
 	// now — where magpie wrote one; nothing else changes (see SyncCatalog).

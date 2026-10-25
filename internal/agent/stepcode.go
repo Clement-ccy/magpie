@@ -437,7 +437,9 @@ func stepcodeIn(at place) *Agent {
 		Dir:     dir,
 		Path:    path,
 		Spelled: prefixed,
-		UA:      []string{"stepcode"},
+		// one model at a time: a model's api in its provider block
+		PicksAPI: true,
+		UA:       []string{"stepcode"},
 		detect: func() bool {
 			return agentDir(dir)
 		},

@@ -102,8 +102,10 @@ func dshAt(at place) *Agent {
 	}
 	return &Agent{
 		ID: "dsh", Name: "DeepSeek Harness", Icon: "deepseek-color", Aliases: []string{"deepseek-harness"}, Spelled: prefixed,
-		UA:  []string{"deepseek-harness"},
-		Bin: "dsh", Dir: dir, Path: path,
+		// one model at a time: which of dsh's three routes it is on
+		PicksAPI: true,
+		UA:       []string{"deepseek-harness"},
+		Bin:      "dsh", Dir: dir, Path: path,
 		// the desktop app installed and not opened yet has no ~/.dsh (#2279)
 		sign: desktop,
 		Sync: func() error { return dshSync(dir, gw()) },
