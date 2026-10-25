@@ -78,6 +78,14 @@ line; agents connected to magpie lose it when it quits.
   stays out of that agent's picker and its config until it is ticked
   (`magpie visible <agent> --only-picked`, back with `--show-new`). A
   model asked for by name still works either way.
+  An agent that names a protocol in its own files, model by model (DeepSeek
+  Harness, Pi and the agents keeping its models file, omp, droid, StepCode,
+  Hermes), shows the API beside each model: Auto, the one its provider serves
+  it on best, or Chat Completions, Responses or Anthropic Messages picked
+  there. The pick is that agent's alone — the gateway relays the request to
+  whatever API the model's provider speaks — and its files follow on the next
+  sync; Hermes, which has one API per provider, gets a provider entry per API
+  (`magpie-responses/<provider>/<model>`).
 - **Profiles.** Snapshot every agent's settings under a name and switch all of
   them back in one move. The profile in use, the one applying would change
   nothing, is ticked, the tray panel's Profiles button shows its name, and
